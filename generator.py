@@ -15,6 +15,7 @@ def generate_event():
         '"GET /about HTTP/1.1" 200',
         '"POST /login HTTP/1.1" 401',  # ניסיון התחברות כושל!
         '"POST /login HTTP/1.1" 401',  # כפילות קטנה כדי להגדיל את הסיכוי לשגיאות
+        '"GET /backup.zip HTTP/1.1" 404',# ניסיון גישה לקבצים לא קיימים
         '"GET /admin_panel HTTP/1.1" 403' # ניסיון גישה לא מורשה
     ]
     return random.choice(events)
@@ -37,12 +38,12 @@ if __name__ == "__main__":
                 ssh_time = current_time.strftime('%b %d %H:%M:%S')
                 file.write(f"{ssh_time} ubuntu-server sshd[1422]: Failed password for root from {ip} port 22 ssh2\n")
                 continue
-        ip = generate_ip()
-        timestamp = format_timestap(current_time)
-        event = generate_event()
+            ip = generate_ip()
+            timestamp = format_timestap(current_time)
+            event = generate_event()
 
-        log_line = f"{ip} - - {timestamp} {event}\n"
-        file.write(log_line)
+            log_line = f"{ip} - - {timestamp} {event}\n"
+            file.write(log_line)
     
 
     
