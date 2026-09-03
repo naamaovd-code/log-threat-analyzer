@@ -1,19 +1,21 @@
 """Analyzing log data to identify potential threats"""
 from collections import defaultdict, deque
-from datetime import datetime
+from datetime import datetime, timedelta
 
 class securityEngine:
 
-    def __init__ (self):
-        self.time_window_seconds = 60
-        self.brute_force_threshold = 5
-        self.scanning_threshold = 15
+    def __init__(self, time_window_seconds=60, brute_force_threshold=5, scanning_threshold=15):
+        # אתחול הגדרות המערכת
+        self.time_window_seconds = time_window_seconds
+        self.brute_force_threshold = brute_force_threshold
+        self.scanning_threshold = scanning_threshold
 
-        self.brute_force_history =  defaultdict(deque)
+        # אתחול מבני הנתונים
+        self.brute_force_history = defaultdict(deque)
         self.scanning_history = defaultdict(deque)
 
         self.alerts = []
-
+        
     def process_line(self, parsed_data: dict):
         """מקבלת מילון נתונים ומחליטה לאן לשלוח אותו לפי סוג השגיאה"""
         if not parsed_data:
