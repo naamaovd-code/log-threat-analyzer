@@ -58,20 +58,3 @@ def read_logs(file_path: str) -> Generator[Dict[str, str], None, None]:
         print(f"Permission denied: {file_path}")
     except Exception as e:
         print(f"Error reading file: {e}")
-if __name__ == "__main__":
-    # נגדיר את הנתיב לקובץ הנתונים שיצרת בשלב 1
-    test_file_path = "logs/server_logs.txt"
-    
-    print(f"Testing parser on {test_file_path}...\n")
-    
-    # הפעלת הגנרטור
-    log_generator = read_logs(test_file_path)
-    
-    # לולאה שתדפיס רק את 10 התוצאות הראשונות כדי לא להציף את המסך
-    for i, data in enumerate(log_generator):
-        print(f"Match {i+1}: {data}")
-        
-        # עצירה אחרי 10 שורות תקינות
-        if i >= 24:
-            print("\nTest stopped after 25 matches.")
-            break

@@ -2,7 +2,9 @@
 venv/
 __pycache__/
 *.pyc 
-
+.vscode/
+.env
 #נתוני קלט ופלט
 logs/
 output/
+*.log

@@ -1,5 +1,7 @@
 """Identifying threat risks by scanning log lines"""
 import argparse
+import json
+import os
 from parser import read_logs
 from engine import securityEngine
 
@@ -30,25 +32,38 @@ def setup_cli():
         default = 15,
         help = "Number of scanning attempts to trigger a scanning alert (default: 15)."
     )
+    parser.add_argument(
+        "-o", "--output",
+        type = str,
+        default = "output/alerts.jsonl",
+        help = "Path to output file for alerts in JSON format (default: None, prints to console)."
+    )
     return parser.parse_args()
 
-def main():
+def main() -> None:
 
-    """main function to run the log threat analyzer"""
+    """Entry point for the log threat analyzer CLI. Manages file I/O and streaming alerts."""
     args = setup_cli()
-    engine = securityEngine(
-    time_window_seconds = args.window, 
-    brute_force_threshold = args.brute_force_threshold, 
-    scanning_threshold = args.scanning_threshold
-    )
-
-    print(f"Starting analysis on {args.log_file}...")
-    for log_data in read_logs(args.log_file):
-        engine.process_line(log_data)
+    output_dir = os.path.dirname(args.output)
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
     
-    print("Analysis complete! Alerts generated:")
-    for alert in engine.alerts:
-        print(alert)
+    print(f"Starting analysis on {args.log_file}...")
+    with open(args.output, 'w', encoding='utf-8') as outfile:
+        def handle_alert(alert: Dict[str, str]) -> None:
+            """Callback function to print alerts and append them to a JSONL file."""
+            print(f"ALERT! {alert['type']} attempt detected from IP {alert['ip_address']}")
+            outfile.write(json.dumps(alert) + '\n')
+        engine = securityEngine(
+            time_window_seconds=args.window, 
+            brute_force_threshold=args.brute_force_threshold, 
+            scanning_threshold=args.scanning_threshold,
+            on_alert_callback=handle_alert
+        )
+        for log_data in read_logs(args.log_file):
+            engine.process_line(log_data)
+    print(f"Analysis complete! Alerts successfully saved to {args.output}")
 
+    
 if __name__ == "__main__":
     main()

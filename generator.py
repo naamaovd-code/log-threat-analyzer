@@ -13,10 +13,10 @@ def generate_event():
     events = [
         '"GET /home HTTP/1.1" 200',
         '"GET /about HTTP/1.1" 200',
-        '"POST /login HTTP/1.1" 401',  # ניסיון התחברות כושל!
-        '"POST /login HTTP/1.1" 401',  # כפילות קטנה כדי להגדיל את הסיכוי לשגיאות
-        '"GET /backup.zip HTTP/1.1" 404',# ניסיון גישה לקבצים לא קיימים
-        '"GET /admin_panel HTTP/1.1" 403' # ניסיון גישה לא מורשה
+        '"POST /login HTTP/1.1" 401',  
+        '"POST /login HTTP/1.1" 401',  
+        '"GET /backup.zip HTTP/1.1" 404',
+        '"GET /admin_panel HTTP/1.1" 403' 
     ]
     return random.choice(events)
 def format_timestap(dt):
