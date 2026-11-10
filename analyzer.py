@@ -3,7 +3,8 @@ import argparse
 import json
 import os
 from parser import read_logs
-from engine import securityEngine
+from engine import SecurityEngine
+from typing import Dict
 
 def setup_cli():
 
@@ -54,7 +55,7 @@ def main() -> None:
             """Callback function to print alerts and append them to a JSONL file."""
             print(f"ALERT! {alert['type']} attempt detected from IP {alert['ip_address']}")
             outfile.write(json.dumps(alert) + '\n')
-        engine = securityEngine(
+        engine = SecurityEngine(
             time_window_seconds=args.window, 
             brute_force_threshold=args.brute_force_threshold, 
             scanning_threshold=args.scanning_threshold,
