@@ -21,6 +21,7 @@ Branch: `web-app`
 - User accounts / login
 - Storing the raw log lines
 - Background processing of very large files (see §7, decision D3)
+- Deleting runs
 - Deployment to a public server
 
 ### Constraints
@@ -90,7 +91,14 @@ sequenceDiagram
     B->>A: POST /api/analyses (multipart file)
     A->>A: validate: file present, not empty, size ≤ limit
     A->>S: analyze(file, settings)
-    S->>R: create_run(filename, settings)
+    S->>S: compute SHA-256 of the file content
+    S->>R: find_completed_run(file_hash, settings)
+    alt same content + same settings already analyzed
+        R-->>S: existing run
+        S-->>A: existing run + alerts (reused = true)
+        A-->>B: 200 OK + JSON
+    end
+    S->>R: create_run(filename, file_hash, settings)
     R->>DB: INSERT analysis_runs (status = 'pending')
     S->>E: read_logs() → process_line() for every line
     E-->>S: alerts (via on_alert_callback)
@@ -121,6 +129,7 @@ erDiagram
     analysis_runs {
         INT id PK
         VARCHAR filename
+        CHAR file_hash
         DATETIME created_at
         ENUM status
         VARCHAR error_message
@@ -142,7 +151,8 @@ erDiagram
 | Column | Type | Notes |
 |---|---|---|
 | `id` | `INT AUTO_INCREMENT` **PK** | The identifier used in URLs (`/api/analyses/42`) |
-| `filename` | `VARCHAR(255) NOT NULL` | The original name, for display only. **Not unique** — the same file can be analyzed many times |
+| `filename` | `VARCHAR(255) NOT NULL` | The original name, for display only. **Not unique** — two different files can have the same name |
+| `file_hash` | `CHAR(64) NOT NULL` | SHA-256 of the file content (64 hex characters). Identifies the *content*, not the name |
 | `created_at` | `DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP` | Stored in UTC |
 | `status` | `ENUM('pending','completed','failed') NOT NULL DEFAULT 'pending'` | |
 | `error_message` | `VARCHAR(500) NULL` | Only for `failed` runs |
@@ -160,7 +170,9 @@ erDiagram
 | `detected_at` | `DATETIME NOT NULL` | Time of the event that triggered the alert (from the log, UTC) |
 | `details` | `VARCHAR(255) NOT NULL` | Human-readable description from the engine |
 
-Index: `(analysis_run_id, threat_type)` — every alert query filters by run, often also by type.
+Indexes:
+- `alerts (analysis_run_id, threat_type)` — every alert query filters by run, often also by type.
+- `analysis_runs (file_hash)` — the duplicate check looks runs up by hash on every upload.
 
 ### Mapping engine output → table
 | Engine alert key | Column |
@@ -175,12 +187,14 @@ Index: `(analysis_run_id, threat_type)` — every alert query filters by run, of
 CREATE TABLE analysis_runs (
     id                    INT AUTO_INCREMENT PRIMARY KEY,
     filename              VARCHAR(255) NOT NULL,
+    file_hash             CHAR(64)     NOT NULL,
     created_at            DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     status                ENUM('pending', 'completed', 'failed') NOT NULL DEFAULT 'pending',
     error_message         VARCHAR(500) NULL,
     time_window_seconds   INT NOT NULL,
     brute_force_threshold INT NOT NULL,
-    scanning_threshold    INT NOT NULL
+    scanning_threshold    INT NOT NULL,
+    INDEX idx_runs_file_hash (file_hash)
 );
 
 CREATE TABLE alerts (
@@ -212,6 +226,17 @@ LEFT JOIN alerts a ON a.analysis_run_id = r.id
 GROUP BY r.id
 ORDER BY r.created_at DESC;
 
+-- Duplicate check: was this exact content already analyzed with these settings?
+SELECT id
+FROM analysis_runs
+WHERE file_hash = '3f8a...e91b'
+  AND time_window_seconds = 60
+  AND brute_force_threshold = 5
+  AND scanning_threshold = 15
+  AND status = 'completed'
+ORDER BY created_at DESC
+LIMIT 1;
+
 -- How many alerts of each type in run 42
 SELECT threat_type, COUNT(*) AS total
 FROM alerts
@@ -240,13 +265,15 @@ Upload a log file and analyze it.
 | `brute_force_threshold` | int, ≥ 1 | no | 5 |
 | `scanning_threshold` | int, ≥ 1 | no | 15 |
 
-**Response `201 Created`**
+**Response `201 Created`** — a new analysis was run.
+**Response `200 OK`** — the same content was already analyzed with the same settings; the existing run is returned with `"reused": true` (see D11).
 ```json
 {
   "id": 42,
   "filename": "server_logs.txt",
   "created_at": "2026-11-10T14:00:00",
   "status": "completed",
+  "reused": false,
   "settings": {"time_window_seconds": 60, "brute_force_threshold": 5, "scanning_threshold": 15},
   "alert_count": 2,
   "alerts": [
@@ -325,15 +352,20 @@ log_threat_analyzer/
 | D6 | **Store the settings used** in each run | Same file + different thresholds = different results; history must be explainable | — |
 | D7 | DB credentials in **`.env`**, not in code | Secrets must not reach GitHub | — |
 | D8 | Frontend is **plain HTML + JS** served by FastAPI | No build tools; focus is on backend and DB | UI becomes complex |
+| D9 | **Alert cooldown**: after an alert, the same IP + threat type is not alerted again until one full time window has passed. Threshold is **inclusive** (5 attempts = alert) | One attack should produce one alert, not duplicates. A long attack still produces one alert per window, which shows it is ongoing | Users need a separate "attack ended" event |
+| D10 | **All alert times are stored in UTC** (converted from the offset in the log line) | Logs from servers in different time zones become comparable. The browser converts to local time for display | — |
+| D11 | **Duplicate uploads are detected by SHA-256 of the content + the settings**, and the existing completed run is returned (`reused: true`) | The filename does not identify the content. The same content with different thresholds gives different results, so settings are part of the key | Users want to force a re-run |
 
 ---
 
-## 8. Open questions for the design review
+## 8. Design review — resolved questions
 
-1. **Counter reset after an alert.** The engine clears the window after each alert, so 10 failed logins in 10 seconds produce **two** alerts. Is that the desired behavior, or should one burst produce one alert?
-2. **Time zone.** The engine drops the time zone from the log (`+0000`). If logs come from servers in different time zones, `detected_at` values are not comparable. Convert to UTC in the engine?
-3. **Duplicate uploads.** Should uploading the same file twice create two runs (current design) or reuse the first result?
-4. **Deleting runs.** Is `DELETE /api/analyses/{id}` needed in the MVP?
+| Question | Decision |
+|---|---|
+| Should 10 failed logins in one minute produce 2 alerts? | No — one alert per IP + type per window (D9). Implemented in `engine.py` with tests |
+| Time zones | Convert to UTC (D10). Implemented in `engine.py` with tests |
+| Same file uploaded twice | Detect by content hash + settings, reuse the result (D11) |
+| Deleting runs | Out of scope for the MVP |
 
 ---
 
