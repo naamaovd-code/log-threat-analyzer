@@ -15,3 +15,12 @@ A Python CLI tool for real-time log analysis and cyber threat detection. Built w
 ## Usage
 Run the analyzer with custom thresholds:
 `python analyzer.py logs/server_logs.txt -w 60 -b 5 -s 15 -o output/alerts.jsonl`
+
+## Development
+Set up the environment and run the tests:
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+python3 -m pytest
+```

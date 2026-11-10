@@ -2,6 +2,7 @@
 import argparse
 import json
 import os
+import sys
 from parser import read_logs
 from engine import SecurityEngine
 from typing import Dict
@@ -45,6 +46,10 @@ def main() -> None:
 
     """Entry point for the log threat analyzer CLI. Manages file I/O and streaming alerts."""
     args = setup_cli()
+    if not os.path.isfile(args.log_file):
+        print(f"Error: log file not found: {args.log_file}", file=sys.stderr)
+        sys.exit(1)
+
     output_dir = os.path.dirname(args.output)
     if output_dir:
         os.makedirs(output_dir, exist_ok=True)
