@@ -1,6 +1,8 @@
 fastapi==0.162.5
 uvicorn==0.54.0
 python-multipart==0.0.33   # needed by FastAPI for file uploads
+mysql-connector-python==26.10.0
+python-dotenv==1.2.4       # reads DB settings from .env
 
 # testing
 pytest==9.2.0
