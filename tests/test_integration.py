@@ -7,12 +7,40 @@ from parser import read_logs
 FIXTURE = Path(__file__).parent / "fixtures" / "sample_logs.txt"
 
 
-def test_full_flow():
+def analyze(path):
+    """Run parser + engine on a file. Return (number of log lines recognized, alerts)."""
     alerts = []
     engine = SecurityEngine(on_alert_callback=alerts.append)
-
-    for parsed_data in read_logs(FIXTURE):
+    lines_parsed = 0
+    for parsed_data in read_logs(path):
+        lines_parsed += 1
         engine.process_line(parsed_data)
+    return lines_parsed, alerts
+
+
+def test_clean_server_log_is_recognized_with_zero_alerts(tmp_path):
+    # a healthy server: valid log lines, nothing suspicious -> lines are counted, no alerts
+    log_file = tmp_path / "clean.log"
+    log_file.write_text(
+        '1.2.3.4 - - [10/Nov/2026:10:00:00 +0000] "GET /home HTTP/1.1" 200 1024\n'
+        '1.2.3.4 - - [10/Nov/2026:10:00:01 +0000] "GET /about HTTP/1.1" 200 2048\n',
+        encoding="utf-8",
+    )
+    assert analyze(log_file) == (2, [])
+
+
+def test_file_that_is_not_a_log_has_zero_recognized_lines(tmp_path):
+    # must be distinguishable from a clean server: zero lines, not "zero alerts"
+    not_a_log = tmp_path / "shopping.txt"
+    not_a_log.write_text("milk\nbread\neggs\n", encoding="utf-8")
+    assert analyze(not_a_log) == (0, [])
+
+
+def test_full_flow():
+    lines_parsed, alerts = analyze(FIXTURE)
+
+    # 34 lines in the file, 2 of them are not log lines (ERROR, sshd)
+    assert lines_parsed == 32
 
     # 10.0.0.1: 5 failed logins in 5 seconds  -> Brute Force
     # 10.0.0.2: only 4 failed logins           -> no alert (below threshold)

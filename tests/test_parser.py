@@ -22,25 +22,35 @@ def test_parse_line_handles_any_line_ending(ending):
     assert parse_line(VALID_401 + ending) == EXPECTED_401
 
 
-@pytest.mark.parametrize("code", ["403", "404"])
-def test_parse_line_accepts_scanning_status_codes(code):
+@pytest.mark.parametrize("code", ["200", "301", "401", "403", "404", "500"])
+def test_parse_line_recognizes_log_lines_with_any_status_code(code):
+    # the parser only recognizes the shape of a log line; deciding what is suspicious is the engine's job
     line = f'10.0.0.3 - - [10/Nov/2026:10:05:00 +0000] "GET /backup.zip HTTP/1.1" {code}\n'
     assert parse_line(line)["status_code"] == code
+
+
+def test_parse_line_accepts_real_apache_line_with_response_size():
+    # real Apache/Nginx logs write the response size after the status code
+    line = '10.0.0.1 - frank [10/Nov/2026:10:00:01 +0000] "POST /login HTTP/1.1" 401 512\n'
+    assert parse_line(line) == EXPECTED_401
 
 
 @pytest.mark.parametrize(
     "line",
     [
-        '10.0.0.9 - - [10/Nov/2026:10:00:00 +0000] "GET /home HTTP/1.1" 200\n',
         "ERROR: System memory dump failed. Restarting service...\n",
         "Nov 10 10:00:00 ubuntu-server sshd[1422]: Failed password for root from 9.9.9.9 port 22 ssh2\n",
         "\n",
         "",
         "this line is garbage but ends with 401\n",
+        "milk, bread, eggs\n",
+        '10.0.0.1 - - [not a date] "POST /login HTTP/1.1" 401\n',
+        '10.0.0.1 - - [10/Nov/2026:10:00:01 +0000] "POST /login HTTP/1.1" 4011\n',
     ],
-    ids=["status_200", "error_line", "sshd_line", "empty_line", "empty_string", "garbage_ending_in_401"],
+    ids=["error_line", "sshd_line", "empty_line", "empty_string", "garbage_ending_in_401",
+         "shopping_list", "invalid_timestamp", "four_digit_status"],
 )
-def test_parse_line_ignores_irrelevant_lines(line):
+def test_parse_line_rejects_lines_that_are_not_log_lines(line):
     assert parse_line(line) is None
 
 

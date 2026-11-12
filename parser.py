@@ -1,27 +1,36 @@
-"""Reading lines from the log file, ignoring comment/junk lines, and extracting the raw data"""
+"""Reading lines from the log file, ignoring comment/junk lines, and extracting the raw data.
+
+The parser only recognizes the *shape* of a log line (Common Log Format, as written by
+Apache / Nginx). It does not decide what is suspicious - that is the engine's job.
+"""
 import re
 from typing import Generator, Dict, Optional
 
-# Only these status codes are relevant for threat detection
-SUSPICIOUS_STATUS_ENDINGS = (" 401", " 403", " 404")
-
-LOG_PATTERN = re.compile(r'^(\d{1,3}(?:\.\d{1,3}){3})\s+.*?\s+\[(.*?)\]\s+".*?"\s+(\d{3})')
+# Common Log Format, e.g.
+#   201.87.61.169 - - [23/Aug/2026:18:36:31 +0000] "POST /login HTTP/1.1" 401 512
+#   ^ IP              ^ time (with zone)          ^ request (quoted)   ^ status ^ size (optional)
+LOG_PATTERN = re.compile(
+    r'^(\d{1,3}(?:\.\d{1,3}){3})'                                   # 1: IP address
+    r'\s+\S+\s+\S+\s+'                                              # identity and user, usually "- -"
+    r'\[(\d{2}/[A-Za-z]{3}/\d{4}:\d{2}:\d{2}:\d{2} [+-]\d{4})\]'    # 2: timestamp
+    r'\s+"[^"]*"'                                                   # the request, in quotes
+    r'\s+(\d{3})'                                                   # 3: status code
+    r'(?:\s|$)'                                                     # followed by a space (size...) or end of line
+)
 
 
 def parse_line(line: str) -> Optional[Dict[str, str]]:
-    """Parse a single line from the log file and extract relevant information. if the line does not match the expected format, return None.
+    """Parse a single line from the log file and extract relevant information.
     Args:
         line (str): A single line from the log file.
     Returns:
-        dict or None: A dictionary containing the extracted data if the line matches the expected format,"""
+        dict or None: the extracted data if the line is a valid log line (any status code),
+        or None if the line is not a log line at all.
+    """
     # remove the line ending ("\n" on Linux, "\r\n" on Windows, or nothing on the last line)
     line = line.rstrip("\r\n")
 
-    # quick filter before running the regex
-    if not line.endswith(SUSPICIOUS_STATUS_ENDINGS):
-        return None
-
-    match = LOG_PATTERN.search(line)
+    match = LOG_PATTERN.match(line)
     if not match:
         return None
 
@@ -33,11 +42,11 @@ def parse_line(line: str) -> Optional[Dict[str, str]]:
 
 
 def read_logs(file_path: str) -> Generator[Dict[str, str], None, None]:
-    """Read lines from the log file, ignoring comment/junk lines, and extract the raw data.
+    """Read lines from the log file, skip lines that are not log lines, and extract the raw data.
     Args:
         file_path (str): The path to the log file.
     Yields:
-        dict: A dictionary containing the extracted data for each valid log line.
+        dict: the extracted data for every valid log line (any status code).
     Raises:
         OSError: if the file cannot be opened (e.g. FileNotFoundError, PermissionError).
             The caller decides how to report it (CLI message, API error, etc.).
