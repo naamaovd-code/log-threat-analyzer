@@ -58,6 +58,42 @@ def test_health_rejects_wrong_http_method():
     assert TestClient(fastapi_app).post("/api/health").status_code == 405
 
 
+# ---------- the web page (no database needed) ----------
+
+def test_home_page_is_served():
+    response = TestClient(fastapi_app).get("/")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+    assert "<title>Log Threat Analyzer</title>" in response.text
+
+
+@pytest.mark.parametrize("path, content_type", [
+    ("/static/app.js", "javascript"),
+    ("/static/style.css", "text/css"),
+])
+def test_page_assets_are_served(path, content_type):
+    response = TestClient(fastapi_app).get(path)
+
+    assert response.status_code == 200
+    assert content_type in response.headers["content-type"]
+
+
+def test_files_outside_static_folder_are_not_served():
+    # path traversal: must not be able to read .env or source code through /static
+    client = TestClient(fastapi_app)
+    for path in ("/static/../.env", "/static/..%2F.env", "/static/../app/config.py"):
+        assert client.get(path).status_code == 404
+
+
+def test_page_never_inserts_server_data_as_html():
+    # XSS protection: values from the server (e.g. a filename) are set with textContent only
+    script = (PROJECT_ROOT / "static" / "app.js").read_text(encoding="utf-8")
+
+    assert "innerHTML" not in script
+    assert "insertAdjacentHTML" not in script
+
+
 # ---------- POST /api/analyses: new analysis ----------
 
 def test_analyze_fixture_is_stored_and_returned(client):

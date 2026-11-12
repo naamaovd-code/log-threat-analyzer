@@ -14,9 +14,10 @@ from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile, status
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
-from app.config import database_config
+from app.config import PROJECT_ROOT, database_config
 from app.repository import Repository
 from app.schemas import AlertOut, AnalysisOut, RunOut, RunSummaryOut, SettingsOut
 from app.service import AnalysisSettings, NotALogFileError, analyze_upload
@@ -24,14 +25,22 @@ from app.service import AnalysisSettings, NotALogFileError, analyze_upload
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024        # 10 MB (decision D3)
 CHUNK_SIZE = 64 * 1024                     # read the upload in 64 KB pieces
 DEFAULT_HISTORY_PERIOD = timedelta(days=2)  # history shows the last 2 days by default (decision D15)
+STATIC_DIR = PROJECT_ROOT / "static"       # the browser page: index.html, app.js, style.css
 
 logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="Log Threat Analyzer",
     description="Upload a log file, detect suspicious activity, and browse the history of analyses.",
-    version="0.3.0",
+    version="0.4.0",
 )
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+@app.get("/", include_in_schema=False)
+def index() -> FileResponse:
+    """The web page (decision D8: plain HTML + JS served by FastAPI)."""
+    return FileResponse(STATIC_DIR / "index.html")
 
 
 def get_repository() -> Repository:

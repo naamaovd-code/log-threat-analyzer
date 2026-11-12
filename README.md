@@ -25,9 +25,14 @@ pip install -r requirements.txt
 python3 -m pytest
 ```
 
-## Web server
-From the project root, with the venv active:
+## Web app
+One-time database setup (installs MySQL, creates the app and test databases, writes `.env`):
+```bash
+bash scripts/setup_db.sh
+```
+Then, from the project root with the venv active:
 ```bash
 uvicorn app.main:app --reload --port 8000
 ```
-Then open http://localhost:8000/docs
+- http://localhost:8000 — the web page: upload a log, see the last 2 days, search by date
+- http://localhost:8000/docs — the API documentation

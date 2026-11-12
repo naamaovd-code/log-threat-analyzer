@@ -440,5 +440,5 @@ log_threat_analyzer/
 | 3 ✅ | `POST /api/analyses` without DB (no `id`, `created_at`, `reused` yet) | Same alerts as the CLI for the fixture |
 | 4 ✅ | MySQL + `schema.sql` + repository + tests (`scripts/setup_db.sh`, separate test database) | Save a run, read it back, identical |
 | 5 ✅ | API wired to the DB + `GET` endpoints + failure handling | Results survive a server restart |
-| 6 | Upload page | Full user story works from the browser |
+| 6 ✅ | Upload page (`static/`: index.html, app.js, style.css, served by FastAPI at `/`) | Full user story works from the browser |
 | 7 | README, merge to `main` | — |
