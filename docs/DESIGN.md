@@ -65,7 +65,8 @@ flowchart LR
 | Client | `static/index.html` | Choose a file, send requests, display results | Talk to the database directly |
 | API Routes | `app/main.py` | HTTP: receive requests, validate input, choose status codes, return JSON | Contain detection logic or SQL |
 | Analysis Service | `app/service.py` | Orchestrate one analysis: create run → run parser+engine → save alerts → mark completed/failed | Know about HTTP |
-| Parser + Engine | `parser.py`, `engine.py` | Read lines, detect threats | Know that a database or HTTP exists |
+| Parser | `parser.py` | Recognize the *shape* of a log line (any status code) and extract its fields | Decide what is suspicious; know that a database or HTTP exists |
+| Engine | `engine.py` | Decide what is suspicious and raise alerts | Know that a database or HTTP exists |
 | Repository | `app/repository.py` | **All** SQL lives here | Contain business logic |
 | Database | MySQL | Persist runs and alerts | — |
 
@@ -101,7 +102,12 @@ sequenceDiagram
     S->>R: create_run(filename, file_hash, settings)
     R->>DB: INSERT analysis_runs (status = 'pending')
     S->>E: read_logs() → process_line() for every line
-    E-->>S: alerts (via on_alert_callback)
+    E-->>S: alerts (via on_alert_callback), service counts lines_parsed
+    alt lines_parsed == 0 (not a log file)
+        S->>R: finish_run(run_id, 'failed', "No log lines in a supported format")
+        S-->>A: error
+        A-->>B: 400 Bad Request
+    end
     S->>R: save_alerts(run_id, alerts)
     R->>DB: INSERT alerts ...
     S->>R: finish_run(run_id, 'completed')
@@ -109,6 +115,15 @@ sequenceDiagram
     A-->>B: 201 Created + JSON
     B-->>User: show alerts table
 ```
+
+### "No alerts" vs "not a log file"
+These must never look the same to the user:
+| Situation | `lines_parsed` | Alerts | Result |
+|---|---|---|---|
+| Clean server log | > 0 | 0 | `201`, completed — "no threats found" |
+| Text file that is not a log (or an unsupported log format) | 0 | — | `400`, run saved as `failed` — "no log lines in a supported format" |
+
+The parser recognizes log lines by shape only (Common Log Format — see `LOG_PATTERN` in `parser.py`), so a healthy log full of `200` responses is still counted.
 
 ### Failure path
 If anything fails after the run was created (unreadable file, DB error):
@@ -133,6 +148,7 @@ erDiagram
         DATETIME created_at
         ENUM status
         VARCHAR error_message
+        INT lines_parsed
         INT time_window_seconds
         INT brute_force_threshold
         INT scanning_threshold
@@ -156,6 +172,7 @@ erDiagram
 | `created_at` | `DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP` | Stored in UTC |
 | `status` | `ENUM('pending','completed','failed') NOT NULL DEFAULT 'pending'` | |
 | `error_message` | `VARCHAR(500) NULL` | Only for `failed` runs |
+| `lines_parsed` | `INT NULL` | How many log lines were recognized. `NULL` while `pending` |
 | `time_window_seconds` | `INT NOT NULL` | The settings used, so a result can be explained and reproduced later |
 | `brute_force_threshold` | `INT NOT NULL` | |
 | `scanning_threshold` | `INT NOT NULL` | |
@@ -173,6 +190,7 @@ erDiagram
 Indexes:
 - `alerts (analysis_run_id, threat_type)` — every alert query filters by run, often also by type.
 - `analysis_runs (file_hash)` — the duplicate check looks runs up by hash on every upload.
+- `analysis_runs (created_at)` — the history page filters runs by analysis date.
 
 ### Mapping engine output → table
 | Engine alert key | Column |
@@ -191,10 +209,12 @@ CREATE TABLE analysis_runs (
     created_at            DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     status                ENUM('pending', 'completed', 'failed') NOT NULL DEFAULT 'pending',
     error_message         VARCHAR(500) NULL,
+    lines_parsed          INT          NULL,
     time_window_seconds   INT NOT NULL,
     brute_force_threshold INT NOT NULL,
     scanning_threshold    INT NOT NULL,
-    INDEX idx_runs_file_hash (file_hash)
+    INDEX idx_runs_file_hash (file_hash),
+    INDEX idx_runs_created_at (created_at)
 );
 
 CREATE TABLE alerts (
@@ -219,10 +239,13 @@ FROM alerts
 WHERE analysis_run_id = 42
 ORDER BY detected_at;
 
--- History list: every run with its number of alerts (newest first)
-SELECT r.id, r.filename, r.created_at, r.status, COUNT(a.id) AS alert_count
+-- History for a date range (by analysis date), with the number of alerts per run, newest first.
+-- The range is half-open: from <= created_at < to
+SELECT r.id, r.filename, r.created_at, r.status, r.lines_parsed, COUNT(a.id) AS alert_count
 FROM analysis_runs r
 LEFT JOIN alerts a ON a.analysis_run_id = r.id
+WHERE r.created_at >= '2026-11-04 22:00:00'
+  AND r.created_at <  '2026-11-11 22:00:00'
 GROUP BY r.id
 ORDER BY r.created_at DESC;
 
@@ -275,6 +298,7 @@ Upload a log file and analyze it.
   "status": "completed",
   "reused": false,
   "settings": {"time_window_seconds": 60, "brute_force_threshold": 5, "scanning_threshold": 15},
+  "lines_parsed": 9325,
   "alert_count": 2,
   "alerts": [
     {"threat_type": "Brute Force", "ip_address": "10.0.0.1", "detected_at": "2026-11-10T10:00:05", "details": "5 failed attempts in 60 seconds"}
@@ -285,19 +309,36 @@ Upload a log file and analyze it.
 **Errors**
 | Status | When |
 |---|---|
-| `400 Bad Request` | No file, or the file is empty |
+| `400 Bad Request` | No file, the file is empty, or **no log lines in a supported format were found** (the run is saved as `failed`) |
 | `413 Payload Too Large` | File larger than the limit (MVP: 10 MB) |
 | `422 Unprocessable Entity` | Invalid settings (e.g. negative threshold) — FastAPI validates this automatically |
 | `500 Internal Server Error` | Analysis or database failed. The run is saved as `failed` |
 
 ### `GET /api/analyses`
-History, newest first.
+History of runs, filtered by **analysis date** (`created_at`), newest first.
+One endpoint serves both the "last week" view and the "specific date" search — only the range differs.
+
+**Query parameters**
+| Parameter | Type | Required | Meaning |
+|---|---|---|---|
+| `from` | ISO 8601 date-time **with time zone** | no | Include runs created at or after this moment |
+| `to` | ISO 8601 date-time **with time zone** | no | Include runs created **before** this moment (exclusive) |
+
+The **browser** computes the range in the user's local time and sends it with the offset, so "12 November" means 12 November in Israel, not in UTC:
+```
+Last week:     GET /api/analyses?from=2026-11-05T00:00:00+02:00&to=2026-11-13T00:00:00+02:00
+One day:       GET /api/analyses?from=2026-11-12T00:00:00+02:00&to=2026-11-13T00:00:00+02:00
+```
+The server converts both to UTC before querying (D10, D12).
+
 - `200` →
 ```json
 [
-  {"id": 42, "filename": "server_logs.txt", "created_at": "2026-11-10T14:00:00", "status": "completed", "alert_count": 2}
+  {"id": 42, "filename": "server_logs.txt", "created_at": "2026-11-12T12:00:00Z", "status": "completed", "lines_parsed": 9325, "alert_count": 2}
 ]
 ```
+- `200` with `[]` when no runs match — **an empty result is not an error**.
+- `422` when `from` / `to` are not valid date-times, or `from` is after `to`.
 
 ### `GET /api/analyses/{id}`
 One run (same shape as the `POST` response, without `alerts`).
@@ -305,9 +346,21 @@ One run (same shape as the `POST` response, without `alerts`).
 - `404` → `{"detail": "Analysis 42 not found"}`
 
 ### `GET /api/analyses/{id}/alerts`
-Alerts of one run. Optional filter: `?threat_type=Scanning`.
-- `200` → list of alerts (same shape as in the `POST` response)
+Alerts of one run — used when the user clicks a run in the history. Optional filter: `?threat_type=Scanning`.
+- `200` → list of alerts (same shape as in the `POST` response); `[]` if the run had no alerts
 - `404` → run does not exist
+
+### Which component sends which request
+| Page component | Request | When |
+|---|---|---|
+| Upload | `POST /api/analyses` | User clicks "Upload". On success the history is refreshed |
+| History (last week) | `GET /api/analyses?from=…&to=…` | Page load |
+| Search by date | `GET /api/analyses?from=…&to=…` | User picks a date and clicks "Search" |
+| Run details | `GET /api/analyses/{id}/alerts` | User clicks a run in either list |
+
+### Validation
+Input is validated **before** analysis (file present, not empty, size, settings, date range).
+Data read back from the database is trusted — the database enforces it with `NOT NULL`, `ENUM` and the foreign key. On the way out, the API only chooses the status code: found → `200`, missing → `404`, empty list → `200 []`, failure → `500`.
 
 ---
 
@@ -355,6 +408,8 @@ log_threat_analyzer/
 | D9 | **Alert cooldown**: after an alert, the same IP + threat type is not alerted again until one full time window has passed. Threshold is **inclusive** (5 attempts = alert) | One attack should produce one alert, not duplicates. A long attack still produces one alert per window, which shows it is ongoing | Users need a separate "attack ended" event |
 | D10 | **All alert times are stored in UTC** (converted from the offset in the log line) | Logs from servers in different time zones become comparable. The browser converts to local time for display | — |
 | D11 | **Duplicate uploads are detected by SHA-256 of the content + the settings**, and the existing completed run is returned (`reused: true`) | The filename does not identify the content. The same content with different thresholds gives different results, so settings are part of the key | Users want to force a re-run |
+| D12 | **History is searched by analysis date** (`created_at`), not by the dates of events inside the log. One endpoint with a `from`/`to` range serves "last week" and "specific date" | The user thinks of "what did I analyze on that day". One range endpoint avoids hard-coding "week" in the server | Users need to search by when the attack happened → add a search over `alerts.detected_at` |
+| D13 | **The parser recognizes log lines by shape only**; the engine decides what is suspicious. A file with 0 recognized lines is an error, not "0 alerts" | Separates reading from detection. Makes "clean server" and "not a log file" distinguishable. Also accepts real Apache/Nginx lines that have the response size after the status code | More log formats are needed → one pattern per format |
 
 ---
 
@@ -366,6 +421,8 @@ log_threat_analyzer/
 | Time zones | Convert to UTC (D10). Implemented in `engine.py` with tests |
 | Same file uploaded twice | Detect by content hash + settings, reuse the result (D11) |
 | Deleting runs | Out of scope for the MVP |
+| Search by which date? | Analysis date (D12) |
+| A text file that is not a log | Error, not "0 alerts" (D13). Parser change implemented with tests |
 
 ---
 
