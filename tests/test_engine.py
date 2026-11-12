@@ -108,6 +108,51 @@ def test_cooldown_is_per_threat_type():
     assert [a["type"] for a in alerts] == ["Brute Force", "Scanning"]
 
 
+# ---------- Lines that are not in time order ----------
+
+def test_out_of_order_events_more_than_a_window_apart_are_not_counted_together():
+    # The case found in a real upload: 3 scans at 77s, written BEFORE 12 scans at 0s.
+    # No 60 second window holds more than 12 -> no alert (threshold 15).
+    events = [event("7.7.7.7", 77, "403") for _ in range(3)]
+    events += [event("7.7.7.7", 0, "404") for _ in range(12)]
+    assert run_engine(events) == []
+
+
+def test_out_of_order_events_inside_one_window_are_counted():
+    # 5 failed logins inside 5 seconds, written in shuffled order -> one alert
+    alerts = run_engine([event("1.1.1.1", s, "401") for s in [3, 1, 4, 0, 2]])
+
+    assert len(alerts) == 1
+    assert alerts[0]["details"] == "5 failed attempts in 60 seconds"
+
+
+def test_late_line_that_completes_a_window_raises_the_alert():
+    # 4 attempts, then an unrelated later one, then the late 5th attempt of the burst
+    events = [event("1.1.1.1", s, "401") for s in [0, 1, 2, 3]]
+    events += [event("1.1.1.1", 500, "401"), event("1.1.1.1", 4, "401")]
+    alerts = run_engine(events)
+
+    assert [a["timestamp"] for a in alerts] == ["2026-11-10 10:00:04"]
+
+
+def test_late_line_inside_an_alerted_window_does_not_alert_again():
+    events = [event("1.1.1.1", s, "401") for s in range(5)]   # alert at second 4
+    events += [event("1.1.1.1", 2, "401")]                    # late line of the same attack
+    assert len(run_engine(events)) == 1
+
+
+def test_late_burst_far_in_the_past_is_a_separate_attack():
+    events = [event("1.1.1.1", 1000 + s, "401") for s in range(5)]   # attack at ~16 minutes
+    events += [event("1.1.1.1", s, "401") for s in range(5)]         # earlier attack, written later
+    assert len(run_engine(events)) == 2
+
+
+def test_window_boundary_is_inclusive():
+    # first and last event exactly 60 seconds apart are inside the same window
+    events = [event("1.1.1.1", s, "401") for s in [60, 0, 15, 30, 45]]
+    assert len(run_engine(events)) == 1
+
+
 # ---------- Time zones ----------
 
 def test_alert_timestamp_is_converted_to_utc():

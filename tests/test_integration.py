@@ -36,6 +36,15 @@ def test_file_that_is_not_a_log_has_zero_recognized_lines(tmp_path):
     assert analyze(not_a_log) == (0, [])
 
 
+def test_out_of_order_log_gives_only_real_alerts():
+    # Same pattern as the generated server_logs.txt: 2.2.2.2 has 3 scans at 18:38:00
+    # written before 13 scans at 18:36:43 (77 seconds earlier). Max 13 in one minute -> no Scanning alert.
+    lines_parsed, alerts = analyze(Path(__file__).parent / "fixtures" / "out_of_order_logs.txt")
+
+    assert lines_parsed == 22
+    assert [(a["type"], a["ip_address"]) for a in alerts] == [("Brute Force", "1.1.1.1")]
+
+
 def test_full_flow():
     lines_parsed, alerts = analyze(FIXTURE)
 

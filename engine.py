@@ -1,7 +1,8 @@
 """Analyzing log data to identify potential security threats"""
-from collections import defaultdict, deque
+import bisect
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone
-from typing import Callable, Optional, Dict, Deque
+from typing import Callable, Optional, Dict, List
 
 LOG_TIME_FORMAT = "%d/%b/%Y:%H:%M:%S %z"     # e.g. 10/Nov/2026:12:00:00 +0200
 ALERT_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"      # always UTC
@@ -14,9 +15,14 @@ class SecurityEngine:
     """Processes log lines in real-time to detect anomalous patterns.
 
     Rules:
-      * An alert is raised when an IP reaches the threshold (inclusive) inside the time window.
-      * After an alert, the same IP + threat type is not alerted again until a full
-        time window has passed (cooldown). One continuous attack = one alert per window.
+      * An alert is raised when an IP has at least `threshold` events (inclusive)
+        inside some time window of `time_window_seconds`.
+      * Log lines may arrive in any time order (e.g. merged or rotated logs, or a
+        server that writes a request only when it finishes). Only events that are
+        really within one window of each other are counted together.
+      * After an alert, the same IP + threat type is not alerted again for events
+        less than one full window away from that alert (cooldown).
+        One continuous attack = one alert per window.
       * All alert timestamps are converted to UTC.
     """
 
@@ -36,15 +42,15 @@ class SecurityEngine:
         self.scanning_threshold = scanning_threshold
         self.on_alert_callback = on_alert_callback
 
-        # per threat type: ip -> timestamps of recent events inside the window
-        self.history: Dict[str, Dict[str, Deque[datetime]]] = {
-            BRUTE_FORCE: defaultdict(deque),
-            SCANNING: defaultdict(deque),
+        # per threat type: ip -> event times, always kept SORTED (lines may arrive out of order)
+        self.history: Dict[str, Dict[str, List[datetime]]] = {
+            BRUTE_FORCE: defaultdict(list),
+            SCANNING: defaultdict(list),
         }
-        # per threat type: ip -> time of the last alert (for the cooldown)
-        self.last_alert_time: Dict[str, Dict[str, datetime]] = {
-            BRUTE_FORCE: {},
-            SCANNING: {},
+        # per threat type: ip -> times of the alerts already raised, kept sorted (for the cooldown)
+        self.alert_times: Dict[str, Dict[str, List[datetime]]] = {
+            BRUTE_FORCE: defaultdict(list),
+            SCANNING: defaultdict(list),
         }
 
     def process_line(self, parsed_data: Optional[Dict[str, str]]) -> None:
@@ -65,16 +71,19 @@ class SecurityEngine:
         self._check(threat_type, ip, current_time, threshold, description)
 
     def _check(self, threat_type: str, ip: str, current_time: datetime, threshold: int, description: str) -> None:
-        """Add the event to the IP's sliding window and raise an alert if needed."""
-        queue = self.history[threat_type][ip]
-        events_in_window = self._update_sliding_window(queue, current_time)
+        """Record the event and raise an alert if it completes a window with enough events."""
+        times = self.history[threat_type][ip]
+        bisect.insort(times, current_time)
 
-        if events_in_window < threshold:
-            return
+        # checked first: skips the counting work for every event of an attack that was already reported
         if self._in_cooldown(threat_type, ip, current_time):
             return
 
-        self.last_alert_time[threat_type][ip] = current_time
+        events_in_window = self._busiest_window_containing(times, current_time)
+        if events_in_window < threshold:
+            return
+
+        bisect.insort(self.alert_times[threat_type][ip], current_time)
         alert = {
             "type": threat_type,
             "ip_address": ip,
@@ -84,18 +93,30 @@ class SecurityEngine:
         if self.on_alert_callback:
             self.on_alert_callback(alert)
 
-    def _update_sliding_window(self, queue: Deque[datetime], current_time: datetime) -> int:
-        """Add the current event, drop events older than the window, return how many remain."""
-        queue.append(current_time)
-        threshold_time = current_time - self.time_window
-        while queue and queue[0] < threshold_time:
-            queue.popleft()
-        return len(queue)
+    def _busiest_window_containing(self, times: List[datetime], current_time: datetime) -> int:
+        """The largest number of events in any time window that contains current_time.
+
+        `times` is sorted. A window [start, start + window] contains current_time when
+        start is between (current_time - window) and current_time. The busiest such
+        window always starts exactly at an event, so every event in that range is tried
+        as the start, and binary search (bisect) counts the events inside each window.
+        """
+        first = bisect.bisect_left(times, current_time - self.time_window)
+        last = bisect.bisect_right(times, current_time)
+
+        busiest = 0
+        for start_index in range(first, last):
+            end_index = bisect.bisect_right(times, times[start_index] + self.time_window)
+            busiest = max(busiest, end_index - start_index)
+        return busiest
 
     def _in_cooldown(self, threat_type: str, ip: str, current_time: datetime) -> bool:
-        """True if this IP was already alerted for this threat less than one window ago."""
-        last_alert = self.last_alert_time[threat_type].get(ip)
-        return last_alert is not None and current_time - last_alert < self.time_window
+        """True if this IP was already alerted for this threat less than one window away
+        from current_time - before or after it, since lines may arrive out of order."""
+        alerts = self.alert_times[threat_type][ip]
+        i = bisect.bisect_left(alerts, current_time)
+        nearest = alerts[max(i - 1, 0): i + 1]   # the closest alert before and after
+        return any(abs(current_time - alert_time) < self.time_window for alert_time in nearest)
 
     @staticmethod
     def _to_utc(timestamp_str: str) -> datetime:
