@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Log Threat Analyzer</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <header class="page-header">
+    <h1>Log Threat Analyzer</h1>
+    <p>Upload a server log, detect brute force and scanning attacks, and come back to the results later.</p>
+  </header>
+
+  <main class="layout">
+    <!-- 1. Upload -->
+    <section class="card" aria-labelledby="upload-title">
+      <h2 id="upload-title">Analyze a log file</h2>
+      <form id="upload-form">
+        <label class="file-picker">
+          <span>Log file (Apache / Nginx access log)</span>
+          <input id="file" name="file" type="file" accept=".log,.txt,text/plain" required>
+        </label>
+
+        <details class="settings">
+          <summary>Detection settings</summary>
+          <div class="settings-grid">
+            <label>Time window (seconds)
+              <input id="time_window_seconds" type="number" min="1" max="3600" value="60" required>
+            </label>
+            <label>Brute force: failed logins
+              <input id="brute_force_threshold" type="number" min="1" value="5" required>
+            </label>
+            <label>Scanning: 403/404 requests
+              <input id="scanning_threshold" type="number" min="1" value="15" required>
+            </label>
+          </div>
+        </details>
+
+        <button id="upload-button" type="submit">Upload and analyze</button>
+      </form>
+      <p id="upload-message" class="message" role="status" aria-live="polite"></p>
+    </section>
+
+    <!-- 2. History of the last 2 days -->
+    <section class="card" aria-labelledby="history-title">
+      <div class="card-title-row">
+        <h2 id="history-title">Last 2 days</h2>
+        <button id="refresh-history" type="button" class="secondary">Refresh</button>
+      </div>
+      <p id="history-message" class="message" role="status" aria-live="polite"></p>
+      <div class="table-wrap">
+        <table class="runs">
+          <thead><tr><th>Analyzed</th><th>File</th><th>Status</th><th>Lines</th><th>Alerts</th><th></th></tr></thead>
+          <tbody id="history-rows"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 3. Search by date -->
+    <section class="card" aria-labelledby="search-title">
+      <h2 id="search-title">Analyses from a specific date</h2>
+      <form id="search-form" class="search-row">
+        <label>Date <input id="search-date" type="date" required></label>
+        <button type="submit">Search</button>
+      </form>
+      <p id="search-message" class="message" role="status" aria-live="polite"></p>
+      <div class="table-wrap">
+        <table class="runs">
+          <thead><tr><th>Analyzed</th><th>File</th><th>Status</th><th>Lines</th><th>Alerts</th><th></th></tr></thead>
+          <tbody id="search-rows"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Details of one analysis: filled by the upload result or by "View" in a list -->
+    <section id="details" class="card details" aria-labelledby="details-title" hidden>
+      <h2 id="details-title">Analysis details</h2>
+      <dl id="details-summary" class="summary"></dl>
+      <p id="details-message" class="message" role="status" aria-live="polite"></p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Type</th><th>IP address</th><th>Detected at (local time)</th><th>Details</th></tr></thead>
+          <tbody id="alert-rows"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
