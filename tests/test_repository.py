@@ -1,8 +1,6 @@
 """Tests for app/repository.py against a REAL MySQL database: the separate test database
-(DB_TEST_NAME in .env), never the app database. Every test starts with empty tables.
-
-If MySQL is not set up (no .env), these tests are skipped instead of failing:
-run scripts/setup_db.sh to enable them.
+(DB_TEST_NAME in .env), never the app database. The `repo` and `db` fixtures live in
+tests/conftest.py. Skipped, not failed, when MySQL is not set up.
 """
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -10,66 +8,13 @@ from pathlib import Path
 import mysql.connector
 import pytest
 
-from app.config import ConfigError, database_config
-from app.repository import Repository
 from app.service import AnalysisSettings, analyze_file
 
-PROJECT_ROOT = Path(__file__).parent.parent
 FIXTURE = Path(__file__).parent / "fixtures" / "sample_logs.txt"
 HASH_A = "a" * 64
 HASH_B = "b" * 64
 DEFAULT = AnalysisSettings()
 ISRAEL = timezone(timedelta(hours=2))
-
-
-# ---------- fixtures ----------
-
-@pytest.fixture(scope="module")
-def test_db_config():
-    try:
-        config = database_config(test=True)
-        connection = mysql.connector.connect(
-            host=config.host, port=config.port, user=config.user,
-            password=config.password, database=config.database,
-        )
-    except (ConfigError, mysql.connector.Error) as error:
-        pytest.skip(f"MySQL test database not available ({error}). Run scripts/setup_db.sh")
-
-    # create the tables from the real schema.sql
-    cursor = connection.cursor()
-    for statement in (PROJECT_ROOT / "schema.sql").read_text(encoding="utf-8").split(";"):
-        if statement.strip():
-            cursor.execute(statement)
-    connection.commit()
-    connection.close()
-    return config
-
-
-@pytest.fixture
-def db(test_db_config):
-    """Empty tables before every test, then a connection for test-only SQL."""
-    connection = mysql.connector.connect(
-        host=test_db_config.host, port=test_db_config.port, user=test_db_config.user,
-        password=test_db_config.password, database=test_db_config.database, time_zone="+00:00",
-    )
-    cursor = connection.cursor()
-    cursor.execute("DELETE FROM alerts")
-    cursor.execute("DELETE FROM analysis_runs")
-    connection.commit()
-    yield connection
-    connection.close()
-
-
-@pytest.fixture
-def repo(db, test_db_config):
-    return Repository(test_db_config)
-
-
-def set_created_at(db, run_id, utc_naive):
-    """Test helper: move a run to a known time, to test date filters."""
-    cursor = db.cursor()
-    cursor.execute("UPDATE analysis_runs SET created_at = %s WHERE id = %s", (utc_naive, run_id))
-    db.commit()
 
 
 # ---------- runs ----------
@@ -197,10 +142,10 @@ def test_pending_and_failed_runs_are_not_reused(repo):
     assert repo.find_completed_run(HASH_A, DEFAULT) is None
 
 
-def test_newest_completed_run_is_reused(repo, db):
+def test_newest_completed_run_is_reused(repo, set_created_at):
     old_id = repo.create_run("a.log", HASH_A, DEFAULT)
     repo.complete_run(old_id, 10)
-    set_created_at(db, old_id, datetime(2026, 11, 1, 10, 0))
+    set_created_at(old_id, datetime(2026, 11, 1, 10, 0))
     new_id = repo.create_run("a.log", HASH_A, DEFAULT)
     repo.complete_run(new_id, 10)
 
@@ -209,14 +154,14 @@ def test_newest_completed_run_is_reused(repo, db):
 
 # ---------- history by analysis date (D12) ----------
 
-def test_list_runs_in_date_range_newest_first(repo, db):
+def test_list_runs_in_date_range_newest_first(repo, set_created_at):
     ids = {}
     for name, created in [("before", datetime(2026, 11, 4, 21, 59)),
                           ("first_day", datetime(2026, 11, 4, 22, 0)),     # 5 Nov 00:00 in Israel
                           ("last_day", datetime(2026, 11, 11, 21, 59)),    # 11 Nov 23:59 in Israel
                           ("after", datetime(2026, 11, 11, 22, 0))]:       # 12 Nov 00:00 in Israel
         ids[name] = repo.create_run(f"{name}.log", HASH_A, DEFAULT)
-        set_created_at(db, ids[name], created)
+        set_created_at(ids[name], created)
 
     # "5 to 11 November" in Israel time, sent with the +02:00 offset like the browser will
     runs = repo.list_runs(datetime(2026, 11, 5, tzinfo=ISRAEL), datetime(2026, 11, 12, tzinfo=ISRAEL))

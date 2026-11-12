@@ -321,7 +321,7 @@ One endpoint serves both the "last week" view and the "specific date" search —
 **Query parameters**
 | Parameter | Type | Required | Meaning |
 |---|---|---|---|
-| `from` | ISO 8601 date-time **with time zone** | no | Include runs created at or after this moment |
+| `from` | ISO 8601 date-time **with time zone** | no | Include runs created at or after this moment. **Default: 2 days before `to` (or before now)** (D15) |
 | `to` | ISO 8601 date-time **with time zone** | no | Include runs created **before** this moment (exclusive) |
 
 The **browser** computes the range in the user's local time and sends it with the offset, so "12 November" means 12 November in Israel, not in UTC:
@@ -330,6 +330,8 @@ Last week:     GET /api/analyses?from=2026-11-05T00:00:00+02:00&to=2026-11-13T00
 One day:       GET /api/analyses?from=2026-11-12T00:00:00+02:00&to=2026-11-13T00:00:00+02:00
 ```
 The server converts both to UTC before querying (D10, D12).
+A `+` in the time zone must be URL-encoded as `%2B` (otherwise it is read as a space); the browser's `URLSearchParams` does this automatically. `Z` (UTC) needs no encoding.
+`GET /api/analyses` with no parameters returns the runs of the **last 2 days** (D15).
 
 - `200` →
 ```json
@@ -411,6 +413,7 @@ log_threat_analyzer/
 | D12 | **History is searched by analysis date** (`created_at`), not by the dates of events inside the log. One endpoint with a `from`/`to` range serves "last week" and "specific date" | The user thinks of "what did I analyze on that day". One range endpoint avoids hard-coding "week" in the server | Users need to search by when the attack happened → add a search over `alerts.detected_at` |
 | D13 | **The parser recognizes log lines by shape only**; the engine decides what is suspicious. A file with 0 recognized lines is an error, not "0 alerts" | Separates reading from detection. Makes "clean server" and "not a log file" distinguishable. Also accepts real Apache/Nginx lines that have the response size after the status code | More log formats are needed → one pattern per format |
 | D14 | **The engine does not assume lines are in time order.** Per IP it keeps event times sorted and looks for the busiest window that contains each new event; the cooldown also looks both before and after an alert | Real logs are written when a request *finishes* (small reordering), and merged or rotated logs can jump by minutes. The old engine assumed order and produced a false Scanning alert on `server_logs.txt` (3 lines at 18:38:00 written before 13 lines at 18:36:43) | Memory per IP grows with the number of events (bounded by the 10 MB upload limit). For unbounded streams: drop events older than an allowed lateness |
+| D15 | **History defaults to the last 2 days** (48 hours before `to`, or before now) when `from` is not given | The history panel opens on recent work without the browser having to send a range; the server does not know the user's time zone, so it counts hours, not calendar days | Users want a different default period |
 
 ---
 
@@ -436,6 +439,6 @@ log_threat_analyzer/
 | 2 ✅ | FastAPI skeleton + `/api/health` + test | `localhost:8000/docs` opens on Windows |
 | 3 ✅ | `POST /api/analyses` without DB (no `id`, `created_at`, `reused` yet) | Same alerts as the CLI for the fixture |
 | 4 ✅ | MySQL + `schema.sql` + repository + tests (`scripts/setup_db.sh`, separate test database) | Save a run, read it back, identical |
-| 5 | API wired to the DB + `GET` endpoints + failure handling | Results survive a server restart |
+| 5 ✅ | API wired to the DB + `GET` endpoints + failure handling | Results survive a server restart |
 | 6 | Upload page | Full user story works from the browser |
 | 7 | README, merge to `main` | — |

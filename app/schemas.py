@@ -1,8 +1,11 @@
 """The shape of the JSON the API returns (docs/DESIGN.md, section 5).
 
 Pydantic models: FastAPI uses them to validate the response and to document it in /docs.
+Datetimes are time zone-aware UTC values and appear in JSON as ISO 8601 with "Z",
+e.g. "2026-11-10T10:00:05Z".
 """
-from typing import List
+from datetime import datetime
+from typing import List, Optional
 
 from pydantic import BaseModel
 
@@ -10,7 +13,7 @@ from pydantic import BaseModel
 class AlertOut(BaseModel):
     threat_type: str
     ip_address: str
-    detected_at: str   # ISO 8601 in UTC, e.g. "2026-11-10T10:00:05Z"
+    detected_at: datetime
     details: str
 
 
@@ -20,11 +23,23 @@ class SettingsOut(BaseModel):
     scanning_threshold: int
 
 
-class AnalysisOut(BaseModel):
-    # id, created_at and reused are added in Phase 5, when runs are stored in the database
+class RunSummaryOut(BaseModel):
+    """One row of the history list."""
+    id: int
     filename: str
+    created_at: datetime
     status: str
-    settings: SettingsOut
-    lines_parsed: int
+    lines_parsed: Optional[int]
     alert_count: int
+
+
+class RunOut(RunSummaryOut):
+    """One run with all its details (GET /api/analyses/{id})."""
+    settings: SettingsOut
+    error_message: Optional[str]
+
+
+class AnalysisOut(RunOut):
+    """Response of POST /api/analyses: the run, whether it was reused, and its alerts."""
+    reused: bool
     alerts: List[AlertOut]
