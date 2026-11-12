@@ -294,14 +294,14 @@ Upload a log file and analyze it.
 {
   "id": 42,
   "filename": "server_logs.txt",
-  "created_at": "2026-11-10T14:00:00",
+  "created_at": "2026-11-10T14:00:00Z",
   "status": "completed",
   "reused": false,
   "settings": {"time_window_seconds": 60, "brute_force_threshold": 5, "scanning_threshold": 15},
   "lines_parsed": 9325,
   "alert_count": 2,
   "alerts": [
-    {"threat_type": "Brute Force", "ip_address": "10.0.0.1", "detected_at": "2026-11-10T10:00:05", "details": "5 failed attempts in 60 seconds"}
+    {"threat_type": "Brute Force", "ip_address": "10.0.0.1", "detected_at": "2026-11-10T10:00:05Z", "details": "5 failed attempts in 60 seconds"}
   ]
 }
 ```
@@ -431,9 +431,9 @@ log_threat_analyzer/
 | Phase | Deliverable | Done when |
 |---|---|---|
 | 0 ✅ | Stable base: tests, fixtures, parser fixes | 27 tests pass on a clean clone |
-| 1 | This document | Reviewed; open questions answered |
-| 2 | FastAPI skeleton + `/api/health` + test | `localhost:8000/docs` opens on Windows |
-| 3 | `POST /api/analyses` without DB | Same alerts as the CLI for the fixture |
+| 1 ✅ | This document | Reviewed; open questions answered |
+| 2 ✅ | FastAPI skeleton + `/api/health` + test | `localhost:8000/docs` opens on Windows |
+| 3 ✅ | `POST /api/analyses` without DB (no `id`, `created_at`, `reused` yet) | Same alerts as the CLI for the fixture |
 | 4 | MySQL + `schema.sql` + repository + tests | Save a run, read it back, identical |
 | 5 | API wired to the DB + `GET` endpoints + failure handling | Results survive a server restart |
 | 6 | Upload page | Full user story works from the browser |

@@ -1,5 +1,6 @@
 fastapi==0.162.5
 uvicorn==0.54.0
+python-multipart==0.0.33   # needed by FastAPI for file uploads
 
 # testing
 pytest==9.2.0
